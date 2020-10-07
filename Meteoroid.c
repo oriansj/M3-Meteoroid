@@ -18,35 +18,42 @@
 #include "Meteoroid.h"
 
 /* Some common functions */
-int read_half(FILE* f, char* failure);
-int read_word(FILE* f, char* failure);
-int read_double(FILE* f, char* failure);
-SCM read_register(FILE* f, char* failure);
-char* read_string(FILE* f, int base, int offset, char* error);
+int read_half(struct buffer* f, char* failure);
+int read_word(struct buffer* f, char* failure);
+int read_double(struct buffer* f, char* failure);
+SCM read_register(struct buffer* f, char* failure);
+char* read_string(struct buffer* f, int base, int offset, char* error);
+void raw_write(char* s, struct buffer* f, int count);
+int get_char(struct buffer* f);
+void put_char(int c, struct buffer* f);
+void write_half(struct buffer* f, int o);
+void write_word(struct buffer* f, int o);
+void write_double(struct buffer* f, int o);
+struct buffer* output_buffer_generate();
 
-struct elf_header* read_elf_header(FILE* f)
+struct elf_header* read_elf_header(struct buffer* f)
 {
 	struct elf_header* r = calloc(1, sizeof(struct elf_header));
 	int c;
 	int i;
 
 	/* Read the Magic */
-	fseek(f, 0, SEEK_SET);
-	c = fgetc(f);
+	f->offset = 0;
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read MAGIC0\n");
 	require(0x7F == c, "First byte not 0x7F\n");
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read MAGIC1\n");
 	require('E' == c, "Second byte not E\n");
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read MAGIC2\n");
 	require('L' == c, "Third byte not L\n");
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read MAGIC3\n");
 	require('F' == c, "Fourth byte not F\n");
 
 	/* Get if 32 or 64 bit */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read EI_CLASS\n");
 	require((1 == c) || (2 == c), "Only 32 and 64bit supported\n");
 	r->EI_CLASS = c;
@@ -54,7 +61,7 @@ struct elf_header* read_elf_header(FILE* f)
 	else largeint = FALSE;
 
 	/* Figure out if big or little endian */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read EI_DATA\n");
 	require((1 == c) || (2 == c), "Only big and little Endian supported\n");
 	r->EI_DATA = c;
@@ -62,26 +69,26 @@ struct elf_header* read_elf_header(FILE* f)
 	else BigEndian = FALSE;
 
 	/* Figure out which elf version */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read EI_VERSION\n");
 	require(1 == c, "M3-Meteoroid only supports ELFv1 at this time\n");
 	r->EI_VERSION = c;
 
 	/* Figure which Operating system ABI expected (Usually just SysV) */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read EI_OSABI\n");
 	r->EI_OSABI = c;
 
 	/* Get kernel ABI but Linux kernel (after at least 2.6) has no definition of it;
 	 * So glibc 2.12+ in case EI_OSABI == 3 treats this field as ABI version of the dynamic linker */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read EI_ABIVERSION\n");
 	r->EI_ABIVERSION = c;
 
 	/* Get the required NULL padding */
 	for(i = 7; i > 0; i = i - 1)
 	{
-		c = fgetc(f);
+		c = get_char(f);
 		require(EOF != c, "Hit EOF while attempting to read EI_PAD\n");
 		require(0 == c, "EI_PAD is expected to be NULLs\n");
 	}
@@ -111,12 +118,12 @@ struct elf_header* read_elf_header(FILE* f)
 	return r;
 }
 
-struct program_header* read_program_header(FILE* f, struct elf_header* e)
+struct program_header* read_program_header(struct buffer* f, struct elf_header* e)
 {
 	struct program_header* r = NULL;
 	struct program_header* hold = NULL;
 	int i;
-	fseek(f, e->e_phoff, SEEK_SET);
+	f->offset = e->e_phoff;
 
 	for(i = 0; i < e->e_phnum; i = i + 1)
 	{
@@ -137,13 +144,13 @@ struct program_header* read_program_header(FILE* f, struct elf_header* e)
 	return r;
 }
 
-struct section_header* read_section_header(FILE* f, struct elf_header* e)
+struct section_header* read_section_header(struct buffer* f, struct elf_header* e)
 {
 	struct section_header* r = NULL;
 	struct section_header* hold = NULL;
 	int i;
 	SCM offset_of_strings = 0;
-	fseek(f, e->e_shoff, SEEK_SET);
+	f->offset = e->e_shoff;
 	for(i = 0; i < e->e_shnum; i = i + 1)
 	{
 		r = calloc(1, sizeof(struct section_header));
@@ -166,37 +173,45 @@ struct section_header* read_section_header(FILE* f, struct elf_header* e)
 	while(NULL != hold)
 	{
 		hold->sh_name = read_string(f, offset_of_strings, hold->sh_name_offset, "Hit EOF while attempting to read sh_name string\n");
-		if(match(".strtab", hold->sh_name)) string_table = hold;
-		else if(match(".symtab", hold->sh_name)) symbol_table = hold;
-		else if(match(".text", hold->sh_name)) text = hold;
-		else if(match(".data", hold->sh_name)) data = hold;
-		else if(match(".bss", hold->sh_name)) bss = hold;
-		else if(match(".rel.text", hold->sh_name)) _rel_text = hold;
-		else if(match(".rela.text", hold->sh_name)) _rela_text = hold;
-		else if(match(".rel.data", hold->sh_name)) _rel_data = hold;
-		else if(match(".rela.data", hold->sh_name)) _rela_data = hold;
+		if(match(".strtab", hold->sh_name)) current_file->string_table = hold;
+		else if(match(".symtab", hold->sh_name)) current_file->symbol_table = hold;
+		else if(match(".text", hold->sh_name)) current_file->text = hold;
+		else if(match(".data", hold->sh_name)) current_file->data = hold;
+		else if(match(".bss", hold->sh_name)) current_file->bss = hold;
+		else if(match(".rel.text", hold->sh_name)) current_file->_rel_text = hold;
+		else if(match(".rela.text", hold->sh_name)) current_file->_rela_text = hold;
+		else if(match(".rel.data", hold->sh_name)) current_file->_rel_data = hold;
+		else if(match(".rela.data", hold->sh_name)) current_file->_rela_data = hold;
 		hold = hold->next;
 	}
 
 	return r;
 }
 
-struct symbol* read_symbols(FILE* f)
+struct symbol* read_symbols(struct buffer* f, char* start)
 {
 	struct symbol* r = NULL;
 	struct symbol* hold = NULL;
-	fseek(f, symbol_table->sh_offset, SEEK_SET);
+	f->offset = current_file->symbol_table->sh_offset;
 	int i = 0;
-	while(i < symbol_table->sh_info)
+	int count = current_file->symbol_table->sh_size / current_file->symbol_table->sh_entsize;
+	if(current_file->symbol_table->sh_info != count)
+	{
+		file_print("\nWARNING: sh_info in the symbol table does not match number of entries\nPossible bug in assmbler/compiler that generated: ", stderr);
+		file_print(current_file->name, stderr);
+		file_print("\nPlease take note\n\n", stderr);
+	}
+
+	while(i < count)
 	{
 		r = calloc(1, sizeof(struct symbol));
 		r->next = hold;
 		r->st_name_offset = read_word(f, "Hit EOF while attempting to read st_name offset\n");
 		if(largeint)
 		{
-			r->st_info = fgetc(f);
+			r->st_info = get_char(f);
 			require(EOF != r->st_info, "Hit EOF while attempting to read st_info\n");
-			r->st_other = fgetc(f);
+			r->st_other = get_char(f);
 			require(EOF != r->st_other, "Hit EOF while attempting to read st_other\n");
 			r->st_shndx = read_half(f, "Hit EOF while attempting to read \n");
 			r->st_value = read_register(f, "Hit EOF while attempting to read st_value\n");
@@ -206,9 +221,9 @@ struct symbol* read_symbols(FILE* f)
 		{
 			r->st_value = read_register(f, "Hit EOF while attempting to read st_value\n");
 			r->st_size = read_register(f, "Hit EOF while attempting to read st_size\n");
-			r->st_info = fgetc(f);
+			r->st_info = get_char(f);
 			require(EOF != r->st_info, "Hit EOF while attempting to read st_info\n");
-			r->st_other = fgetc(f);
+			r->st_other = get_char(f);
 			require(EOF != r->st_other, "Hit EOF while attempting to read st_other\n");
 			r->st_shndx = read_half(f, "Hit EOF while attempting to read \n");
 		}
@@ -219,18 +234,19 @@ struct symbol* read_symbols(FILE* f)
 
 	while(NULL != hold)
 	{
-		hold->st_name = read_string(f, string_table->sh_offset, hold->st_name_offset, "Hit EOF while attempting to read st_name\n");
+		hold->st_name = read_string(f, current_file->string_table->sh_offset, hold->st_name_offset, "Hit EOF while attempting to read st_name\n");
+		if(match(start, hold->st_name)) entry = hold;
 		hold = hold->next;
 	}
 
 	return r;
 }
 
-struct relocation* read_relocation(FILE* f, char* segment)
+struct relocation* read_relocation(struct buffer* f, char* segment)
 {
 	struct section_header* s = NULL;
-	if(match(".data", segment)) s = _rel_data;
-	else if(match(".text", segment)) s = _rel_text;
+	if(match(".data", segment)) s = current_file->_rel_data;
+	else if(match(".text", segment)) s = current_file->_rel_text;
 	else require(NULL != s, "read_relocation called withour valid section argument\n");
 
 	if(NULL == s) return NULL;
@@ -238,7 +254,7 @@ struct relocation* read_relocation(FILE* f, char* segment)
 	int count = s->sh_size / s->sh_entsize;
 	struct relocation* r = NULL;
 	struct relocation* hold = NULL;
-	fseek(f, s->sh_offset, SEEK_SET);
+	f->offset = s->sh_offset;
 	int i = 0;
 	while(i < count)
 	{
@@ -256,11 +272,11 @@ struct relocation* read_relocation(FILE* f, char* segment)
 	return r;
 }
 
-struct adjusted_relocation* read_adjusted_relocations(FILE* f, char* segment)
+struct adjusted_relocation* read_adjusted_relocations(struct buffer* f, char* segment)
 {
 	struct section_header* s = NULL;
-	if(match(".data", segment)) s = _rela_data;
-	else if(match(".text", segment)) s = _rela_text;
+	if(match(".data", segment)) s = current_file->_rela_data;
+	else if(match(".text", segment)) s = current_file->_rela_text;
 	else require(NULL != s, "read_relocation called withour valid section argument\n");
 
 	if(NULL == s) return NULL;
@@ -268,7 +284,7 @@ struct adjusted_relocation* read_adjusted_relocations(FILE* f, char* segment)
 	int count = s->sh_size / s->sh_entsize;
 	struct adjusted_relocation* r = NULL;
 	struct adjusted_relocation* hold = NULL;
-	fseek(f, s->sh_offset, SEEK_SET);
+	f->offset = s->sh_offset;
 	int i = 0;
 	while(i < count)
 	{
@@ -289,22 +305,128 @@ struct adjusted_relocation* read_adjusted_relocations(FILE* f, char* segment)
 	return r;
 }
 
-struct segment* read_segment(FILE* f, int offset, int size, char* name)
+struct segment* read_segment(struct buffer* f, int offset, int size, char* name)
 {
 	int i = 0;
 	int c;
 	struct segment* r = calloc(1, sizeof(struct segment));
+	r->starting_address = -1;
 	r->contents = calloc(size+1, sizeof(char));
 	r->name = name;
 	r->size = size;
-	fseek(f, offset, SEEK_SET);
+	f->offset = offset;
 	while(i < size)
 	{
-		c = fgetc(f);
+		c = get_char(f);
 		require(EOF != c, "Hit EOF while attempting to read segment\n");
 		r->contents[i] = c;
 		i = i + 1;
 	}
 
+	return r;
+}
+
+
+SCM calculate_next_start(struct segment* s, int page_size)
+{
+	/* require sizeof(SCM) of padding after segments because I feel like it */
+	SCM last_address = s->starting_address + s->size + sizeof(SCM);
+	if(0 == (last_address & (page_size - 1))) return last_address;
+	return (last_address & ~(page_size - 1)) + page_size;
+}
+
+
+void read_elf_file(struct buffer* in)
+{
+	current_file->header = read_elf_header(in);
+	current_file->segments = read_program_header(in, current_file->header);
+	current_file->sections = read_section_header(in, current_file->header);
+	current_file->symbols = read_symbols(in, "_start");
+	current_file->r_text = read_relocation(in, ".text");
+	current_file->r_data = read_relocation(in, ".data");
+	current_file->ar_text = read_adjusted_relocations(in, ".text");
+	current_file->ar_data = read_adjusted_relocations(in, ".data");
+
+	/* Use base address on first file otherwise just grow the code (.text) block */
+	if(NULL == current_file->next) current_file->text->contents = read_segment(in, current_file->text->sh_offset, current_file->text->sh_size, ".text");
+	else current_file->text->contents = read_segment(in, current_file->text->sh_offset, current_file->text->sh_size, ".text");
+
+	if(NULL != current_file->text) text_size = text_size + current_file->text->sh_size;
+	if(NULL != current_file->data) data_size = data_size + current_file->data->sh_size;
+
+	/* Data segment has to be fixed after all of the code (.text) segments have been read */
+	if(NULL != current_file->data) current_file->data->contents = read_segment(in, current_file->data->sh_offset, current_file->data->sh_size, ".data");
+}
+
+struct node* reverse_nodes(struct node* head)
+{
+	struct node* root = NULL;
+	while(NULL != head)
+	{
+		struct node* next = head->next;
+		head->next = root;
+		root = head;
+		head = next;
+	}
+	return root;
+}
+
+SCM realign_text_segments(struct node* h)
+{
+	if(NULL == h) return BaseAddress;
+	if(NULL == h->text) return realign_text_segments(h->next);
+
+	h->text->contents->starting_address = realign_text_segments(h->next);
+	return h->text->contents->starting_address + h->text->contents->size;
+}
+
+void realign_data_segments(int page_size)
+{
+	SCM data_start = calculate_next_start(current_file->text->contents, page_size);
+	current_file = reverse_nodes(current_file);
+	struct node* h = current_file;
+	while(NULL != h)
+	{
+		if(NULL != h->data)
+		{
+			h->data->contents->starting_address = data_start;
+			data_start = data_start + h->data->contents->size;
+		}
+		h = h->next;
+	}
+}
+
+void write_elf_header(struct buffer* f)
+{
+	f->offset = 0;
+	/* put in the magic */
+	put_char('\x7f', f);
+	put_char('E', f);
+	put_char('L', f);
+	put_char('F', f);
+	put_char(current_file->header->EI_CLASS, f);
+	put_char(current_file->header->EI_DATA, f);
+	put_char(current_file->header->EI_VERSION, f);
+	put_char(current_file->header->EI_OSABI, f);
+	put_char(current_file->header->EI_ABIVERSION, f);
+	/* EI_PAD */
+	put_char(0, f);
+	put_char(0, f);
+	put_char(0, f);
+	put_char(0, f);
+	put_char(0, f);
+	put_char(0, f);
+	put_char(0, f);
+	/* set e_type to ET_EXEC */
+	write_half(f, 2);
+	write_half(f, current_file->header->e_machine);
+	/* Set e_version to 1 */
+	write_word(f, 1);
+}
+
+struct buffer* output_generate()
+{
+	struct buffer* r = output_buffer_generate();
+	write_elf_header(r);
 	return r;
 }

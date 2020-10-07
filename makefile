@@ -23,8 +23,8 @@ CFLAGS:=$(CFLAGS) -D_GNU_SOURCE -O0 -std=c99 -ggdb
 
 all: M3-Meteoroid-x86
 
-M3-Meteoroid-x86: results x86.c Meteoroid.c Meteoroid.h endian.c functions/require.c functions/file_print.c functions/match.c | bin
-	$(CC) $(CFLAGS) x86.c Meteoroid.c endian.c functions/require.c functions/file_print.c functions/match.c -o bin/M3-Meteoroid-x86
+M3-Meteoroid-x86: interface.c x86.c Meteoroid.c Meteoroid.h endian.c debug.c functions/require.c functions/file_print.c functions/raw_write.c functions/match.c functions/numerate.c functions/in_set.c | bin
+	$(CC) $(CFLAGS) interface.c x86.c Meteoroid.c endian.c debug.c functions/require.c functions/file_print.c functions/raw_write.c functions/match.c functions/numerate.c functions/in_set.c -o bin/M3-Meteoroid-x86
 
 # Clean up after ourselves
 .PHONY: clean

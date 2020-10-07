@@ -17,19 +17,35 @@
 
 #include "Meteoroid.h"
 
-int read_half_little_endian(FILE* f, char* failure)
+int get_char(struct buffer* f)
+{
+	if(f->offset > f->size) return -1;
+
+	/* GCC seems to think returning more than a byte from a byte string is a good idea sometimes ??? */
+	int r = (f->contents[f->offset]) & 0xFF;
+	f->offset = f->offset + 1;
+	return r;
+}
+
+void put_char(int c, struct buffer* f)
+{
+	f->contents[f->offset] = c;
+	f->offset = f->offset + 1;
+}
+
+int read_half_little_endian(struct buffer* f, char* failure)
 {
 	int a = 0;
 	int b = 0;
 	int r = 0;
 
 	/* Read first byte */
-	int c = fgetc(f);
+	int c = get_char(f);
 	require(EOF != c, failure);
 	b = c;
 
 	/* Read second byte */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, failure);
 	a = c;
 
@@ -38,24 +54,24 @@ int read_half_little_endian(FILE* f, char* failure)
 	return r;
 }
 
-int read_half_big_endian(FILE* f, char* failure)
+int read_half_big_endian(struct buffer* f, char* failure)
 {
 	int r = 0;
 
 	/* Read first byte */
-	int c = fgetc(f);
+	int c = get_char(f);
 	require(EOF != c, failure);
 	r = c * 256;
 
 	/* Read second byte */
-	c = fgetc(f);
+	c = get_char(f);
 	require(EOF != c, failure);
 	r = r + c;
 
 	return r;
 }
 
-int read_word_little_endian(FILE* f, char* failure)
+int read_word_little_endian(struct buffer* f, char* failure)
 {
 	int a = 0;
 	int b = 0;
@@ -64,22 +80,22 @@ int read_word_little_endian(FILE* f, char* failure)
 	int r = 0;
 
 	/* Read first byte */
-	int t = fgetc(f);
+	int t = get_char(f);
 	require(EOF != t, failure);
 	d = t;
 
 	/* Read second byte */
-	t = fgetc(f);
+	t = get_char(f);
 	require(EOF != t, failure);
 	c = t;
 
 	/* Read third byte */
-	t = fgetc(f);
+	t = get_char(f);
 	require(EOF != t, failure);
 	b = t;
 
 	/* Read fourth byte */
-	t = fgetc(f);
+	t = get_char(f);
 	require(EOF != t, failure);
 	a = t;
 
@@ -88,7 +104,7 @@ int read_word_little_endian(FILE* f, char* failure)
 	return r;
 }
 
-int read_word_big_endian(FILE* f, char* failure)
+int read_word_big_endian(struct buffer* f, char* failure)
 {
 	int r = 0;
 	int c;
@@ -97,7 +113,7 @@ int read_word_big_endian(FILE* f, char* failure)
 	/* Read 4 bytes */
 	for(i = 4; i > 0; i = i - 1)
 	{
-		c = fgetc(f);
+		c = get_char(f);
 		require(EOF != c, failure);
 		r = (r * 256) + c;
 	}
@@ -105,7 +121,7 @@ int read_word_big_endian(FILE* f, char* failure)
 	return r;
 }
 
-int read_double_little_endian(FILE* f, char* failure)
+int read_double_little_endian(struct buffer* f, char* failure)
 {
 	int a = 0;
 	int b = 0;
@@ -115,22 +131,22 @@ int read_double_little_endian(FILE* f, char* failure)
 	int i;
 
 	/* Read first byte */
-	int t = fgetc(f);
+	int t = get_char(f);
 	require(EOF != t, failure);
 	d = t;
 
 	/* Read second byte */
-	t = fgetc(f);
+	t = get_char(f);
 	require(EOF != t, failure);
 	c = t;
 
 	/* Read third byte */
-	t = fgetc(f);
+	t = get_char(f);
 	require(EOF != t, failure);
 	b = t;
 
 	/* Read fourth byte */
-	t = fgetc(f);
+	t = get_char(f);
 	require(EOF != t, failure);
 	a = t;
 
@@ -140,7 +156,7 @@ int read_double_little_endian(FILE* f, char* failure)
 	/* make sure it fits in 32bits */
 	for(i = 4; i > 0; i = i - 1)
 	{
-		c = fgetc(f);
+		c = get_char(f);
 		require(EOF != c, failure);
 		require(0 == c, "M3-Meteoroid currently only supports binaries under 2GB in size\n");
 	}
@@ -148,7 +164,7 @@ int read_double_little_endian(FILE* f, char* failure)
 	return r;
 }
 
-int read_double_big_endian(FILE* f, char* failure)
+int read_double_big_endian(struct buffer* f, char* failure)
 {
 	int r = 0;
 	int c;
@@ -157,7 +173,7 @@ int read_double_big_endian(FILE* f, char* failure)
 	/* make sure it fits in 32bits */
 	for(i = 4; i > 0; i = i - 1)
 	{
-		c = fgetc(f);
+		c = get_char(f);
 		require(EOF != c, failure);
 		require(0 == c, "M3-Meteoroid currently only supports binaries under 2GB in size\n");
 	}
@@ -165,7 +181,7 @@ int read_double_big_endian(FILE* f, char* failure)
 	/* Read 4 bytes */
 	for(i = 4; i > 0; i = i - 1)
 	{
-		c = fgetc(f);
+		c = get_char(f);
 		require(EOF != c, failure);
 		r = (r * 256) + c;
 	}
@@ -173,52 +189,207 @@ int read_double_big_endian(FILE* f, char* failure)
 	return r;
 }
 
-int read_half(FILE* f, char* failure)
+int read_half(struct buffer* f, char* failure)
 {
 	if(BigEndian) return read_half_big_endian(f, failure);
 	else return read_half_little_endian(f, failure);
 }
 
-int read_word(FILE* f, char* failure)
+int read_word(struct buffer* f, char* failure)
 {
 	if(BigEndian) return read_word_big_endian(f, failure);
 	else return read_word_little_endian(f, failure);
 }
 
-int read_double(FILE* f, char* failure)
+int read_double(struct buffer* f, char* failure)
 {
 	if(BigEndian) return read_double_big_endian(f, failure);
 	else return read_double_little_endian(f, failure);
 }
 
-SCM read_register(FILE* f, char* failure)
+SCM read_register(struct buffer* f, char* failure)
 {
 	if(largeint) return read_double(f, failure);
 	else return read_word(f, failure);
 }
 
-char* read_string(FILE* f, int base, int offset, char* error)
+char* read_string(struct buffer* f, int base, int offset, char* error)
 {
 	/* Deal with NULL case */
 	if(0 == offset) return "";
 
 	/* Protect pointer to file */
-	fflush(f);
-	SCM p = ftell(f);
+	SCM p = f->offset;
 
 	char* r = calloc(MAX_STRING, sizeof(char));
-	fseek(f, base + offset, SEEK_SET);
-	int c = fgetc(f);
+	f->offset = base + offset;
+	int c = get_char(f);
 	int i = 0;
 	while(0 != c)
 	{
 		require(EOF != c, error);
 		r[i] = c;
 		i = i + 1;
-		c = fgetc(f);
+		c = get_char(f);
 	}
 
 	/* Return file pointer to previous place */
-	fseek(f, p, SEEK_SET);
+	f->offset = p;
+	return r;
+}
+
+void write_half_little_endian(struct buffer* f, int o)
+{
+	int high = 0xFF & (o % 256);
+	int low = o & 0xFF;
+	put_char(low, f);
+	put_char(high, f);
+}
+
+void write_half_big_endian(struct buffer* f, int o)
+{
+	int high = 0xFF & (o % 256);
+	int low = o & 0xFF;
+	put_char(high, f);
+	put_char(low, f);
+}
+
+void write_word_little_endian(struct buffer* f, int o)
+{
+	int high = 0xFFFF & (o % 65536);
+	int low = o & 0xFFFF;
+	write_half_little_endian(f, low);
+	write_half_little_endian(f, high);
+}
+
+void write_word_big_endian(struct buffer* f, int o)
+{
+	int high = 0xFFFF & (o % 65536);
+	int low = o & 0xFFFF;
+	write_half_big_endian(f, high);
+	write_half_big_endian(f, low);
+}
+
+void write_double_little_endian(struct buffer* f, int o)
+{
+	/* currently only support values that fit in 32 bits */
+	write_half_little_endian(f, o);
+	write_half_little_endian(f, 0);
+}
+
+void write_double_big_endian(struct buffer* f, int o)
+{
+	/* currently only support values that fit in 32 bits */
+	write_half_big_endian(f, 0);
+	write_half_big_endian(f, o);
+}
+
+void write_half(struct buffer* f, int o)
+{
+	if(BigEndian) write_half_big_endian(f, o);
+	else write_half_little_endian(f, o);
+}
+
+void write_word(struct buffer* f, int o)
+{
+	if(BigEndian) write_word_big_endian(f, o);
+	else write_word_little_endian(f, o);
+}
+
+void write_double(struct buffer* f, int o)
+{
+	if(BigEndian) write_double_big_endian(f, o);
+	else write_double_little_endian(f, o);
+}
+
+void write_register(struct buffer* f, int o)
+{
+	if(largeint) write_double(f, o);
+	else write_word(f, o);
+}
+
+void print_byte(int c, FILE* f)
+{
+	char* table = "0123456789ABCDEF";
+	fputc(table[(c & 0xF0) >> 4], f);
+	fputc(table[c & 0xF], f);
+}
+
+void print_address(SCM address, FILE* f)
+{
+	if(largeint)
+	{
+		require( 0 == address >> 32, "M3-Meteoroid currently only supports printing addresses for binaries under 2GB in size\n");
+		print_byte(0, f);
+		print_byte(0, f);
+		print_byte(0, f);
+		print_byte(0, f);
+	}
+
+	print_byte((address & 0xFF000000) >> 24, f);
+	print_byte((address & 0xFF0000) >> 16, f);
+	print_byte((address & 0xFF00) >> 8, f);
+	print_byte((address & 0xFF), f);
+}
+
+struct buffer* get_file(FILE* f, char* name)
+{
+	if(NULL == f)
+	{
+		file_print("Unable to open file ", stderr);
+		file_print(name, stderr);
+		file_print(" for reading\nExiting before problems occur\n", stderr);
+		exit(EXIT_FAILURE);
+	}
+
+	fseek(f, 0, SEEK_END);
+	fflush(f);
+	struct buffer* b = calloc(1, sizeof(struct buffer));
+	b->size = ftell(f);
+	b->name = name;
+	fseek(f, 0, SEEK_SET);
+	b->contents = calloc(b->size + 4, sizeof(char));
+
+	int i = 0;
+	int C;
+	while(i < b->size)
+	{
+		C = fgetc(f);
+		require(EOF != C, "File changed size before done reading file\n");
+		b->contents[i] = C;
+		i = i + 1;
+	}
+
+	return b;
+}
+
+struct buffer* output_buffer_generate()
+{
+	struct buffer* r = calloc(1, sizeof(struct buffer));
+	if(largeint)
+	{
+		/* ELF header required */
+		r->size = 64;
+		/* .text segment entry */
+		r->size = r->size + 52;
+		/* .data segment entry */
+		r->size = r->size + 52;
+	}
+	else
+	{
+		/* ELF header required */
+		r->size = 52;
+		/* .text segment entry */
+		r->size = r->size + 32;
+		/* .data segment entry */
+		r->size = r->size + 32;
+	}
+
+	/* .text segment */
+	r->size = r->size + text_size;
+	/* .data segment */
+	r->size = r->size + data_size;
+
+	r->contents = calloc(r->size, sizeof(char));
 	return r;
 }

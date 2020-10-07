@@ -71,6 +71,14 @@ struct segment
 	int starting_address;
 };
 
+struct buffer
+{
+	char* name;
+	int size;
+	int offset;
+	char* contents;
+};
+
 struct section_header
 {
 	char* sh_name;
@@ -85,6 +93,7 @@ struct section_header
 	SCM sh_addralign;
 	SCM sh_entsize;
 	int section_number;
+	struct segment* contents;
 	struct section_header* next;
 };
 
@@ -121,17 +130,36 @@ struct adjusted_relocation
 	struct adjusted_relocation* next;
 };
 
+struct node
+{
+	char* name;
+	struct elf_header* header;
+	struct program_header* segments;
+	struct section_header* sections;
+	struct section_header* string_table;
+	struct section_header* symbol_table;
+	struct symbol* symbols;
+	struct section_header* text;
+	struct section_header* data;
+	struct section_header* bss;
+	struct section_header* _rel_text;
+	struct relocation* r_text;
+	struct section_header* _rela_text;
+	struct adjusted_relocation* ar_text;
+	struct section_header* _rel_data;
+	struct relocation* r_data;
+	struct section_header* _rela_data;
+	struct adjusted_relocation* ar_data;
+	struct node* next;
+};
+
 /* Some globals to keep things simpler */
 int BigEndian;
 int largeint;
-struct section_header* string_table;
-struct section_header* symbol_table;
-struct section_header* text;
-struct section_header* data;
-struct section_header* bss;
-struct section_header* _rel_text;
-struct section_header* _rela_text;
-struct section_header* _rel_data;
-struct section_header* _rela_data;
-struct segment* text_contents;
-struct segment* data_contents;
+SCM BaseAddress;
+int VERBOSE;
+int DEBUG;
+struct node* current_file;
+struct symbol* entry;
+SCM text_size;
+SCM data_size;
