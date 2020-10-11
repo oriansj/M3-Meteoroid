@@ -31,16 +31,17 @@ void sane_print(int c, FILE* f)
 	}
 }
 
-void print_segment(struct section_header* s, char* name)
+void print_segment(struct elf_section_header* s, char* name)
 {
-	require(match(s->sh_name, name), "Tried to print the wrong segment\nAborting\n");
-
-	struct segment* contents = s->contents;
-	file_print("Segment type: ", stdout);
-	file_print(name, stdout);
-	file_print("\n", stdout);
 	if(NULL != s)
 	{
+		require(match(s->sh_name, name), "Tried to print the wrong segment\nAborting\n");
+
+		struct segment* contents = s->contents;
+		file_print("Segment type: ", stdout);
+		file_print(name, stdout);
+		file_print("\n", stdout);
+
 		int i = 0;
 		int address = contents->starting_address;
 		int size = s->sh_size;
@@ -70,7 +71,7 @@ void print_segment(struct section_header* s, char* name)
 	}
 }
 
-void print_file(struct node* f)
+void print_file(struct elf_object_file* f)
 {
 	while(NULL != f)
 	{

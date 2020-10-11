@@ -17,23 +17,23 @@
 
 #include "Meteoroid.h"
 
-int get_char(struct buffer* f)
+int get_char(struct segment* f)
 {
-	if(f->offset > f->size) return -1;
+	if(read_offset > f->size) return -1;
 
 	/* GCC seems to think returning more than a byte from a byte string is a good idea sometimes ??? */
-	int r = (f->contents[f->offset]) & 0xFF;
-	f->offset = f->offset + 1;
+	int r = (f->contents[read_offset]) & 0xFF;
+	read_offset = read_offset + 1;
 	return r;
 }
 
-void put_char(int c, struct buffer* f)
+void put_char(int c, struct segment* f)
 {
-	f->contents[f->offset] = c;
-	f->offset = f->offset + 1;
+	f->contents[write_offset] = c;
+	write_offset = write_offset + 1;
 }
 
-int read_half_little_endian(struct buffer* f, char* failure)
+int read_half_little_endian(struct segment* f, char* failure)
 {
 	int a = 0;
 	int b = 0;
@@ -54,7 +54,7 @@ int read_half_little_endian(struct buffer* f, char* failure)
 	return r;
 }
 
-int read_half_big_endian(struct buffer* f, char* failure)
+int read_half_big_endian(struct segment* f, char* failure)
 {
 	int r = 0;
 
@@ -71,7 +71,7 @@ int read_half_big_endian(struct buffer* f, char* failure)
 	return r;
 }
 
-int read_word_little_endian(struct buffer* f, char* failure)
+int read_word_little_endian(struct segment* f, char* failure)
 {
 	int a = 0;
 	int b = 0;
@@ -104,7 +104,7 @@ int read_word_little_endian(struct buffer* f, char* failure)
 	return r;
 }
 
-int read_word_big_endian(struct buffer* f, char* failure)
+int read_word_big_endian(struct segment* f, char* failure)
 {
 	int r = 0;
 	int c;
@@ -121,7 +121,7 @@ int read_word_big_endian(struct buffer* f, char* failure)
 	return r;
 }
 
-int read_double_little_endian(struct buffer* f, char* failure)
+int read_double_little_endian(struct segment* f, char* failure)
 {
 	int a = 0;
 	int b = 0;
@@ -164,7 +164,7 @@ int read_double_little_endian(struct buffer* f, char* failure)
 	return r;
 }
 
-int read_double_big_endian(struct buffer* f, char* failure)
+int read_double_big_endian(struct segment* f, char* failure)
 {
 	int r = 0;
 	int c;
@@ -189,40 +189,40 @@ int read_double_big_endian(struct buffer* f, char* failure)
 	return r;
 }
 
-int read_half(struct buffer* f, char* failure)
+int read_half(struct segment* f, char* failure)
 {
 	if(BigEndian) return read_half_big_endian(f, failure);
 	else return read_half_little_endian(f, failure);
 }
 
-int read_word(struct buffer* f, char* failure)
+int read_word(struct segment* f, char* failure)
 {
 	if(BigEndian) return read_word_big_endian(f, failure);
 	else return read_word_little_endian(f, failure);
 }
 
-int read_double(struct buffer* f, char* failure)
+int read_double(struct segment* f, char* failure)
 {
 	if(BigEndian) return read_double_big_endian(f, failure);
 	else return read_double_little_endian(f, failure);
 }
 
-SCM read_register(struct buffer* f, char* failure)
+SCM read_register(struct segment* f, char* failure)
 {
 	if(largeint) return read_double(f, failure);
 	else return read_word(f, failure);
 }
 
-char* read_string(struct buffer* f, int base, int offset, char* error)
+char* read_string(struct segment* f, int base, int offset, char* error)
 {
 	/* Deal with NULL case */
 	if(0 == offset) return "";
 
 	/* Protect pointer to file */
-	SCM p = f->offset;
+	SCM p = read_offset;
 
 	char* r = calloc(MAX_STRING, sizeof(char));
-	f->offset = base + offset;
+	read_offset = base + offset;
 	int c = get_char(f);
 	int i = 0;
 	while(0 != c)
@@ -234,75 +234,75 @@ char* read_string(struct buffer* f, int base, int offset, char* error)
 	}
 
 	/* Return file pointer to previous place */
-	f->offset = p;
+	read_offset = p;
 	return r;
 }
 
-void write_half_little_endian(struct buffer* f, int o)
+void write_half_little_endian(struct segment* f, int o)
 {
-	int high = 0xFF & (o % 256);
+	int high = 0xFF & (o >> 8);
 	int low = o & 0xFF;
 	put_char(low, f);
 	put_char(high, f);
 }
 
-void write_half_big_endian(struct buffer* f, int o)
+void write_half_big_endian(struct segment* f, int o)
 {
-	int high = 0xFF & (o % 256);
+	int high = 0xFF & (o >> 8);
 	int low = o & 0xFF;
 	put_char(high, f);
 	put_char(low, f);
 }
 
-void write_word_little_endian(struct buffer* f, int o)
+void write_word_little_endian(struct segment* f, int o)
 {
-	int high = 0xFFFF & (o % 65536);
+	int high = 0xFFFF & (o >> 16);
 	int low = o & 0xFFFF;
 	write_half_little_endian(f, low);
 	write_half_little_endian(f, high);
 }
 
-void write_word_big_endian(struct buffer* f, int o)
+void write_word_big_endian(struct segment* f, int o)
 {
-	int high = 0xFFFF & (o % 65536);
+	int high = 0xFFFF & (o >> 16);
 	int low = o & 0xFFFF;
 	write_half_big_endian(f, high);
 	write_half_big_endian(f, low);
 }
 
-void write_double_little_endian(struct buffer* f, int o)
+void write_double_little_endian(struct segment* f, int o)
 {
 	/* currently only support values that fit in 32 bits */
 	write_half_little_endian(f, o);
 	write_half_little_endian(f, 0);
 }
 
-void write_double_big_endian(struct buffer* f, int o)
+void write_double_big_endian(struct segment* f, int o)
 {
 	/* currently only support values that fit in 32 bits */
 	write_half_big_endian(f, 0);
 	write_half_big_endian(f, o);
 }
 
-void write_half(struct buffer* f, int o)
+void write_half(struct segment* f, int o)
 {
 	if(BigEndian) write_half_big_endian(f, o);
 	else write_half_little_endian(f, o);
 }
 
-void write_word(struct buffer* f, int o)
+void write_word(struct segment* f, int o)
 {
 	if(BigEndian) write_word_big_endian(f, o);
 	else write_word_little_endian(f, o);
 }
 
-void write_double(struct buffer* f, int o)
+void write_double(struct segment* f, int o)
 {
 	if(BigEndian) write_double_big_endian(f, o);
 	else write_double_little_endian(f, o);
 }
 
-void write_register(struct buffer* f, int o)
+void write_register(struct segment* f, int o)
 {
 	if(largeint) write_double(f, o);
 	else write_word(f, o);
@@ -332,7 +332,7 @@ void print_address(SCM address, FILE* f)
 	print_byte((address & 0xFF), f);
 }
 
-struct buffer* get_file(FILE* f, char* name)
+struct segment* get_file(FILE* f, char* name)
 {
 	if(NULL == f)
 	{
@@ -342,9 +342,10 @@ struct buffer* get_file(FILE* f, char* name)
 		exit(EXIT_FAILURE);
 	}
 
+	read_offset = 0;
 	fseek(f, 0, SEEK_END);
 	fflush(f);
-	struct buffer* b = calloc(1, sizeof(struct buffer));
+	struct segment* b = calloc(1, sizeof(struct segment));
 	b->size = ftell(f);
 	b->name = name;
 	fseek(f, 0, SEEK_SET);
@@ -363,9 +364,9 @@ struct buffer* get_file(FILE* f, char* name)
 	return b;
 }
 
-struct buffer* output_buffer_generate()
+struct segment* output_buffer_generate()
 {
-	struct buffer* r = calloc(1, sizeof(struct buffer));
+	struct segment* r = calloc(1, sizeof(struct segment));
 	if(largeint)
 	{
 		/* ELF header required */

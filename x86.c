@@ -17,8 +17,11 @@
 
 #include "Meteoroid.h"
 
-void read_elf_file(struct buffer* in);
-void architecture_load(struct buffer* in)
+void read_elf_file(struct segment* in);
+SCM get_address_from_symbol(char* name);
+void write_word(struct segment* f, int o);
+
+void architecture_load(struct segment* in)
 {
 	read_elf_file(in);
 	require(current_file->header->e_machine == 3, "elf file is not for x86\n");
@@ -40,4 +43,18 @@ int page_size()
 SCM Get_base_address()
 {
 	return 0x8048000;
+}
+
+void apply_relocations()
+{
+	struct relocation* r = relocation_table;
+	SCM offset;
+
+	while(NULL != r)
+	{
+		write_offset = r->target_offset;
+		offset = get_address_from_symbol(r->symbol_name);
+		write_word(r->target_section->contents, offset);
+		r = r->next;
+	}
 }

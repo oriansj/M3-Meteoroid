@@ -21,16 +21,19 @@ struct buffer* get_file(FILE* f, char* name);
 void architecture_load(struct buffer* in);
 char* binary_name();
 int page_size();
-SCM realign_text_segments(struct node* h);
+SCM realign_text_segments(struct elf_object_file* h);
 void realign_data_segments(int page_size);
-void print_file(struct node* f);
+struct symbol* generate_symbol_table(struct elf_object_file* h);
+struct relocation* collection_relocations(struct elf_object_file* f);
+void apply_relocations();
+void print_file(struct elf_object_file* f);
 SCM Get_base_address();
 int numerate_string(char *a);
 
 int main(int argc, char** argv)
 {
 	struct buffer* in;
-	struct node* hold;
+	struct elf_object_file* hold;
 	FILE* destination_file;
 	char* destination_name = "a.out";
 	BaseAddress = Get_base_address();
@@ -72,7 +75,7 @@ int main(int argc, char** argv)
 		{
 			char* name = argv[i + 1];
 			hold = current_file;
-			current_file = calloc(1, sizeof(struct node));
+			current_file = calloc(1, sizeof(struct elf_object_file));
 			current_file->next = hold;
 			current_file->name = name;
 			in = get_file(fopen(name, "r"), name);
@@ -123,12 +126,16 @@ int main(int argc, char** argv)
 
 	realign_text_segments(current_file);
 	realign_data_segments(page_size());
+	symbol_table = generate_symbol_table(current_file);
+	relocation_table = collection_relocations(current_file);
 
 	if(PrePRINT)
 	{
 		print_file(current_file);
 		exit(EXIT_SUCCESS);
 	}
+
+	apply_relocations();
 
 	if(PRINT)
 	{

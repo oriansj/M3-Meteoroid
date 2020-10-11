@@ -18,27 +18,26 @@
 #include "Meteoroid.h"
 
 /* Some common functions */
-int read_half(struct buffer* f, char* failure);
-int read_word(struct buffer* f, char* failure);
-int read_double(struct buffer* f, char* failure);
-SCM read_register(struct buffer* f, char* failure);
-char* read_string(struct buffer* f, int base, int offset, char* error);
-void raw_write(char* s, struct buffer* f, int count);
-int get_char(struct buffer* f);
-void put_char(int c, struct buffer* f);
-void write_half(struct buffer* f, int o);
-void write_word(struct buffer* f, int o);
-void write_double(struct buffer* f, int o);
-struct buffer* output_buffer_generate();
+int read_half(struct segment* f, char* failure);
+int read_word(struct segment* f, char* failure);
+int read_double(struct segment* f, char* failure);
+SCM read_register(struct segment* f, char* failure);
+char* read_string(struct segment* f, int base, int offset, char* error);
+int get_char(struct segment* f);
+void put_char(int c, struct segment* f);
+void write_half(struct segment* f, int o);
+void write_word(struct segment* f, int o);
+void write_double(struct segment* f, int o);
+struct segment* output_buffer_generate();
 
-struct elf_header* read_elf_header(struct buffer* f)
+struct elf_header* read_elf_header(struct segment* f)
 {
 	struct elf_header* r = calloc(1, sizeof(struct elf_header));
 	int c;
 	int i;
 
 	/* Read the Magic */
-	f->offset = 0;
+	read_offset = 0;
 	c = get_char(f);
 	require(EOF != c, "Hit EOF while attempting to read MAGIC0\n");
 	require(0x7F == c, "First byte not 0x7F\n");
@@ -118,16 +117,16 @@ struct elf_header* read_elf_header(struct buffer* f)
 	return r;
 }
 
-struct program_header* read_program_header(struct buffer* f, struct elf_header* e)
+struct elf_program_header* read_program_header(struct segment* f, struct elf_header* e)
 {
-	struct program_header* r = NULL;
-	struct program_header* hold = NULL;
+	struct elf_program_header* r = NULL;
+	struct elf_program_header* hold = NULL;
 	int i;
-	f->offset = e->e_phoff;
+	read_offset = e->e_phoff;
 
 	for(i = 0; i < e->e_phnum; i = i + 1)
 	{
-		r = calloc(1, sizeof(struct program_header));
+		r = calloc(1, sizeof(struct elf_program_header));
 		r->next = hold;
 		r->p_type = read_word(f, "Hit EOF while attempting to read p_type\n");
 		if(largeint) r->p_flags = read_word(f, "Hit EOF while attempting to read p_flags\n");
@@ -144,16 +143,16 @@ struct program_header* read_program_header(struct buffer* f, struct elf_header* 
 	return r;
 }
 
-struct section_header* read_section_header(struct buffer* f, struct elf_header* e)
+struct elf_section_header* read_section_header(struct segment* f, struct elf_header* e)
 {
-	struct section_header* r = NULL;
-	struct section_header* hold = NULL;
+	struct elf_section_header* r = NULL;
+	struct elf_section_header* hold = NULL;
 	int i;
 	SCM offset_of_strings = 0;
-	f->offset = e->e_shoff;
+	read_offset = e->e_shoff;
 	for(i = 0; i < e->e_shnum; i = i + 1)
 	{
-		r = calloc(1, sizeof(struct section_header));
+		r = calloc(1, sizeof(struct elf_section_header));
 		r->next = hold;
 		r->sh_name_offset = read_word(f, "Hit EOF while attempting to read sh_name offset\n");
 		r->sh_type = read_word(f, "Hit EOF while attempting to read sh_type\n");
@@ -188,11 +187,11 @@ struct section_header* read_section_header(struct buffer* f, struct elf_header* 
 	return r;
 }
 
-struct symbol* read_symbols(struct buffer* f, char* start)
+struct elf_symbol* read_symbols(struct segment* f)
 {
-	struct symbol* r = NULL;
-	struct symbol* hold = NULL;
-	f->offset = current_file->symbol_table->sh_offset;
+	struct elf_symbol* r = NULL;
+	struct elf_symbol* hold = NULL;
+	read_offset = current_file->symbol_table->sh_offset;
 	int i = 0;
 	int count = current_file->symbol_table->sh_size / current_file->symbol_table->sh_entsize;
 	if(current_file->symbol_table->sh_info != count)
@@ -204,7 +203,7 @@ struct symbol* read_symbols(struct buffer* f, char* start)
 
 	while(i < count)
 	{
-		r = calloc(1, sizeof(struct symbol));
+		r = calloc(1, sizeof(struct elf_symbol));
 		r->next = hold;
 		r->st_name_offset = read_word(f, "Hit EOF while attempting to read st_name offset\n");
 		if(largeint)
@@ -235,34 +234,69 @@ struct symbol* read_symbols(struct buffer* f, char* start)
 	while(NULL != hold)
 	{
 		hold->st_name = read_string(f, current_file->string_table->sh_offset, hold->st_name_offset, "Hit EOF while attempting to read st_name\n");
-		if(match(start, hold->st_name)) entry = hold;
 		hold = hold->next;
 	}
 
 	return r;
 }
 
-struct relocation* read_relocation(struct buffer* f, char* segment)
+char* find_relocation_symbol_name(SCM index)
 {
-	struct section_header* s = NULL;
-	if(match(".data", segment)) s = current_file->_rel_data;
-	else if(match(".text", segment)) s = current_file->_rel_text;
+	struct elf_symbol* i = current_file->symbols;
+	while(NULL != i)
+	{
+		if(index == i->symbol_number)
+		{
+			/* first deal with happy case */
+			if(!match("", i->st_name)) return i->st_name;
+
+			/* deal with the case of a shit assembler */
+			struct elf_section_header* sections = current_file->sections;
+			while(NULL != sections)
+			{
+				if(i->st_shndx == sections->section_number) return sections->sh_name;
+
+				sections = sections->next;
+			}
+
+			file_print("Giving up figuring out symbol\n", stderr);
+			exit(EXIT_FAILURE);
+		}
+
+		i = i->next;
+	}
+
+	return NULL;
+}
+
+struct elf_relocation* read_relocation(struct segment* f, char* segment)
+{
+	struct elf_section_header* s = NULL;
+	if(match(".data", segment))
+	{
+		s = current_file->_rel_data;
+	}
+	else if(match(".text", segment))
+	{
+		s = current_file->_rel_text;
+	}
 	else require(NULL != s, "read_relocation called withour valid section argument\n");
 
 	if(NULL == s) return NULL;
 
 	int count = s->sh_size / s->sh_entsize;
-	struct relocation* r = NULL;
-	struct relocation* hold = NULL;
-	f->offset = s->sh_offset;
+	struct elf_relocation* r = NULL;
+	struct elf_relocation* hold = NULL;
+	read_offset = s->sh_offset;
 	int i = 0;
 	while(i < count)
 	{
-		r = calloc(1, sizeof(struct relocation));
+		r = calloc(1, sizeof(struct elf_relocation));
 		r->next = hold;
-		r->segment = segment;
 		r->r_offset = read_register(f, "Hit EOF while attempting to read r_offset\n");
 		r->r_info = read_register(f, "Hit EOF while attempting to read r_info\n");
+		r->name = find_relocation_symbol_name(r->r_info >> 8);
+		r->r_type = r->r_info & 0xFF;
 
 		r->relocation_number = i;
 		hold = r;
@@ -272,30 +306,41 @@ struct relocation* read_relocation(struct buffer* f, char* segment)
 	return r;
 }
 
-struct adjusted_relocation* read_adjusted_relocations(struct buffer* f, char* segment)
+struct elf_adjusted_relocation* read_adjusted_relocations(struct segment* f, char* segment)
 {
-	struct section_header* s = NULL;
-	if(match(".data", segment)) s = current_file->_rela_data;
-	else if(match(".text", segment)) s = current_file->_rela_text;
-	else require(NULL != s, "read_relocation called withour valid section argument\n");
+	struct elf_section_header* s = NULL;
+	if(match(".data", segment))
+	{
+		s = current_file->_rela_data;
+	}
+	else if(match(".text", segment))
+	{
+		s = current_file->_rela_text;
+	}
+	else
+	{
+		file_print("read_relocation called withour valid section argument\n", stderr);
+		exit(EXIT_FAILURE);
+	}
 
 	if(NULL == s) return NULL;
 
 	int count = s->sh_size / s->sh_entsize;
-	struct adjusted_relocation* r = NULL;
-	struct adjusted_relocation* hold = NULL;
-	f->offset = s->sh_offset;
+	struct elf_adjusted_relocation* r = NULL;
+	struct elf_adjusted_relocation* hold = NULL;
+	read_offset = s->sh_offset;
 	int i = 0;
 	while(i < count)
 	{
-		r = calloc(1, sizeof(struct adjusted_relocation));
+		r = calloc(1, sizeof(struct elf_adjusted_relocation));
 		r->next = hold;
-		r->segment = segment;
 		r->r_offset = read_register(f, "Hit EOF while attempting to read r_offset\n");
 		if(BigEndian && largeint) r->r_info_top = read_word(f, "Hit EOF while attempting to read r_info\n");
 		r->r_info = read_word(f, "Hit EOF while attempting to read r_info\n");
 		if(!BigEndian && largeint) r->r_info_top = read_word(f, "Hit EOF while attempting to read r_info\n");
 		r->r_addend = read_register(f, "Hit EOF while attempting to read r_addend\n");
+		r->name = find_relocation_symbol_name(r->r_info >> 8);
+		r->r_type = r->r_info & 0xFF;
 
 		r->adjusted_relocation_number = i;
 		hold = r;
@@ -305,16 +350,16 @@ struct adjusted_relocation* read_adjusted_relocations(struct buffer* f, char* se
 	return r;
 }
 
-struct segment* read_segment(struct buffer* f, int offset, int size, char* name)
+struct segment* read_segment(struct segment* f, int offset, int size, char* name)
 {
 	int i = 0;
 	int c;
 	struct segment* r = calloc(1, sizeof(struct segment));
 	r->starting_address = -1;
-	r->contents = calloc(size+1, sizeof(char));
+	r->contents = calloc(size+4, sizeof(char));
 	r->name = name;
 	r->size = size;
-	f->offset = offset;
+	read_offset = offset;
 	while(i < size)
 	{
 		c = get_char(f);
@@ -336,34 +381,38 @@ SCM calculate_next_start(struct segment* s, int page_size)
 }
 
 
-void read_elf_file(struct buffer* in)
+void read_elf_file(struct segment* in)
 {
 	current_file->header = read_elf_header(in);
 	current_file->segments = read_program_header(in, current_file->header);
 	current_file->sections = read_section_header(in, current_file->header);
-	current_file->symbols = read_symbols(in, "_start");
+	current_file->symbols = read_symbols(in);
 	current_file->r_text = read_relocation(in, ".text");
 	current_file->r_data = read_relocation(in, ".data");
 	current_file->ar_text = read_adjusted_relocations(in, ".text");
 	current_file->ar_data = read_adjusted_relocations(in, ".data");
 
-	/* Use base address on first file otherwise just grow the code (.text) block */
-	if(NULL == current_file->next) current_file->text->contents = read_segment(in, current_file->text->sh_offset, current_file->text->sh_size, ".text");
-	else current_file->text->contents = read_segment(in, current_file->text->sh_offset, current_file->text->sh_size, ".text");
+	/* Don't try t read .TEXT if it is not there */
+	if(NULL != current_file->text)
+	{
+		current_file->text->contents = read_segment(in, current_file->text->sh_offset, current_file->text->sh_size, ".text");
+		text_size = text_size + current_file->text->sh_size;
+	}
 
-	if(NULL != current_file->text) text_size = text_size + current_file->text->sh_size;
-	if(NULL != current_file->data) data_size = data_size + current_file->data->sh_size;
-
-	/* Data segment has to be fixed after all of the code (.text) segments have been read */
-	if(NULL != current_file->data) current_file->data->contents = read_segment(in, current_file->data->sh_offset, current_file->data->sh_size, ".data");
+	/* Don't try t read .DATA if it is not there */
+	if(NULL != current_file->data)
+	{
+		current_file->data->contents = read_segment(in, current_file->data->sh_offset, current_file->data->sh_size, ".data");
+		data_size = data_size + current_file->data->sh_size;
+	}
 }
 
-struct node* reverse_nodes(struct node* head)
+struct elf_object_file* reverse_nodes(struct elf_object_file* head)
 {
-	struct node* root = NULL;
+	struct elf_object_file* root = NULL;
 	while(NULL != head)
 	{
-		struct node* next = head->next;
+		struct elf_object_file* next = head->next;
 		head->next = root;
 		root = head;
 		head = next;
@@ -371,7 +420,7 @@ struct node* reverse_nodes(struct node* head)
 	return root;
 }
 
-SCM realign_text_segments(struct node* h)
+SCM realign_text_segments(struct elf_object_file* h)
 {
 	if(NULL == h) return BaseAddress;
 	if(NULL == h->text) return realign_text_segments(h->next);
@@ -384,7 +433,7 @@ void realign_data_segments(int page_size)
 {
 	SCM data_start = calculate_next_start(current_file->text->contents, page_size);
 	current_file = reverse_nodes(current_file);
-	struct node* h = current_file;
+	struct elf_object_file* h = current_file;
 	while(NULL != h)
 	{
 		if(NULL != h->data)
@@ -396,9 +445,144 @@ void realign_data_segments(int page_size)
 	}
 }
 
-void write_elf_header(struct buffer* f)
+SCM lookup_section(char* s, struct elf_section_header* t)
 {
-	f->offset = 0;
+	if(NULL == t) return -1;
+
+	if(match(s, t->sh_name)) return t->section_number;
+
+	return lookup_section(s, t->next);
+}
+
+void check_for_duplicate_symbols(char* s, struct symbol* sym)
+{
+	while(NULL != sym)
+	{
+		if(match(s, sym->name))
+		{
+			file_print("duplicate definition found for: ", stderr);
+			file_print(s, stderr);
+			file_print("\nAborting to prevent issues\n", stderr);
+			exit(EXIT_FAILURE);
+		}
+
+		sym = sym->next;
+	}
+}
+
+struct symbol* generate_symbol_table(struct elf_object_file* h)
+{
+	if(NULL == h) return NULL;
+
+	SCM text_index = lookup_section(".text", h->symbol_table);
+	SCM data_index = lookup_section(".data", h->symbol_table);
+
+	struct symbol* r = generate_symbol_table(h->next);
+	struct symbol* hold = NULL;
+	struct elf_symbol* i;
+	for(i = h->symbols; NULL != i; i = i->next)
+	{
+		/* Only add if have name and is not undefined */
+		if(!match("", i->st_name) && (0 != i->st_shndx))
+		{
+			check_for_duplicate_symbols(i->st_name, r);
+			hold = r;
+			r = calloc(1, sizeof(struct symbol));
+			r->name = i->st_name;
+
+			if(text_index == i->st_shndx)
+			{
+				r->address = h->text->contents->starting_address + i->st_value;
+			}
+			else if(data_index == i->st_shndx)
+			{
+				r->address = h->data->contents->starting_address + i->st_value;
+			}
+			else if(0xFFF1 == i->st_shndx)
+			{
+				/* It is an absolute address */
+				r->address = i->st_value;
+			}
+			else
+			{
+				file_print("I just got an st_shndx value I don't understand\nAborting so I don't miss something\n", stderr);
+				exit(EXIT_FAILURE);
+			}
+
+			r->next = hold;
+		}
+	}
+
+	return r;
+}
+
+char* find_address_symbol_name(SCM address)
+{
+	if(0 > address) return NULL;
+	struct symbol* s = symbol_table;
+	while(NULL != s)
+	{
+		if(address == s->address) return s->name;
+		s = s->next;
+	}
+
+	return NULL;
+}
+
+SCM get_address_from_symbol(char* name)
+{
+	require(NULL != name, "It is not possible to get the address when you don't give me a symbol's name\n");
+
+	struct symbol* s = symbol_table;
+	while(NULL != s)
+	{
+		if(match(name, s->name)) return s->address;
+		s = s->next;
+	}
+
+	file_print("Was unable to find symbol named: ", stderr);
+	file_print(name, stderr);
+	file_print(" in the symbol table\nAborting before I do something stupid\n", stderr);
+	exit(EXIT_FAILURE);
+}
+
+struct relocation* collection_relocations(struct elf_object_file* f)
+{
+	if(NULL == f) return NULL;
+
+	struct relocation* r = collection_relocations(f->next);
+	struct relocation* hold = NULL;
+	struct elf_relocation* a = f->r_text;
+	SCM offset = -1;
+
+	while(NULL != a)
+	{
+		/* Because ELF shoves the offset into where the value belongs to save disk space; we need to pull it out */
+		read_offset = a->r_offset;
+		offset = read_word(f->text->contents, "failed to read .data relocation offset from segment\n");
+
+		/* Create our useful relocation record (pointing to the old) */
+		hold = r;
+		r = calloc(1, sizeof(struct relocation));
+		r->next = hold;
+		r->target_section = f->text;
+		r->target_offset = a->r_offset;
+
+		/* Depending if the relocation actually gave us the name or the segment where to find it */
+		r->symbol_name = a->name;
+		if(match(".data", a->name)) r->symbol_name = find_address_symbol_name(f->data->contents->starting_address + offset);
+		if(match(".text", a->name)) r->symbol_name = find_address_symbol_name(f->text->contents->starting_address + offset);
+
+		a = a->next;
+	}
+
+	return r;
+}
+
+
+void write_elf_header(struct segment* f)
+{
+	read_offset = 0;
 	/* put in the magic */
 	put_char('\x7f', f);
 	put_char('E', f);
@@ -424,9 +608,9 @@ void write_elf_header(struct buffer* f)
 	write_word(f, 1);
 }
 
-struct buffer* output_generate()
+struct segment* output_generate()
 {
-	struct buffer* r = output_buffer_generate();
+	struct segment* r = output_buffer_generate();
 	write_elf_header(r);
 	return r;
 }

@@ -49,7 +49,7 @@ struct elf_header
 	int e_shstrndx;
 };
 
-struct program_header
+struct elf_program_header
 {
 	int p_type;
 	int p_flags;
@@ -60,7 +60,7 @@ struct program_header
 	SCM p_memsz;
 	SCM p_align;
 	int program_header_number;
-	struct program_header* next;
+	struct elf_program_header* next;
 };
 
 struct segment
@@ -71,15 +71,7 @@ struct segment
 	int starting_address;
 };
 
-struct buffer
-{
-	char* name;
-	int size;
-	int offset;
-	char* contents;
-};
-
-struct section_header
+struct elf_section_header
 {
 	char* sh_name;
 	int sh_name_offset;
@@ -94,10 +86,10 @@ struct section_header
 	SCM sh_entsize;
 	int section_number;
 	struct segment* contents;
-	struct section_header* next;
+	struct elf_section_header* next;
 };
 
-struct symbol
+struct elf_symbol
 {
 	char* st_name;
 	SCM st_name_offset;
@@ -107,50 +99,68 @@ struct symbol
 	int st_other;
 	int st_shndx;
 	int symbol_number;
+	struct elf_symbol* next;
+};
+
+struct symbol
+{
+	char* name;
+	SCM address;
 	struct symbol* next;
 };
 
-struct relocation
+struct elf_relocation
 {
-	char* segment;
+	char* name;
 	SCM r_offset;
 	SCM r_info;
+	SCM r_type;
 	int relocation_number;
-	struct relocation* next;
+	struct elf_relocation* next;
 };
 
-struct adjusted_relocation
+struct elf_adjusted_relocation
 {
-	char* segment;
+	char* name;
 	SCM r_offset;
 	int r_info;
 	int r_info_top;
 	SCM r_addend;
+	SCM r_type;
 	int adjusted_relocation_number;
-	struct adjusted_relocation* next;
+	struct elf_adjusted_relocation* next;
 };
 
-struct node
+struct relocation
+{
+	char* symbol_name;
+	struct elf_section_header* target_section;
+	SCM target_offset;
+	SCM type;
+	struct relocation* next;
+};
+
+struct elf_object_file
 {
 	char* name;
 	struct elf_header* header;
-	struct program_header* segments;
-	struct section_header* sections;
-	struct section_header* string_table;
-	struct section_header* symbol_table;
-	struct symbol* symbols;
-	struct section_header* text;
-	struct section_header* data;
-	struct section_header* bss;
-	struct section_header* _rel_text;
-	struct relocation* r_text;
-	struct section_header* _rela_text;
-	struct adjusted_relocation* ar_text;
-	struct section_header* _rel_data;
-	struct relocation* r_data;
-	struct section_header* _rela_data;
-	struct adjusted_relocation* ar_data;
-	struct node* next;
+	struct elf_program_header* segments;
+	struct elf_section_header* sections;
+	struct elf_section_header* string_table;
+	struct elf_section_header* symbol_table;
+	struct elf_symbol* symbols;
+	struct elf_section_header* text;
+	struct elf_section_header* data;
+	struct elf_section_header* bss;
+	struct elf_section_header* _rel_text;
+	struct elf_relocation* r_text;
+	struct elf_section_header* _rela_text;
+	struct elf_adjusted_relocation* ar_text;
+	struct elf_section_header* _rel_data;
+	struct elf_relocation* r_data;
+	struct elf_section_header* _rela_data;
+	struct elf_adjusted_relocation* ar_data;
+	struct elf_object_file* next;
 };
 
 /* Some globals to keep things simpler */
@@ -159,7 +169,11 @@ int largeint;
 SCM BaseAddress;
 int VERBOSE;
 int DEBUG;
-struct node* current_file;
+struct elf_object_file* current_file;
+struct symbol* symbol_table;
+struct relocation* relocation_table;
 struct symbol* entry;
 SCM text_size;
 SCM data_size;
+SCM read_offset;
+SCM write_offset;
